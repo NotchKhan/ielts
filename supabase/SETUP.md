@@ -14,12 +14,12 @@ RLS разрешает каждому пользователю читать то
 
 Supabase → Authentication → URL Configuration:
 
-- добавить Redirect URL `https://ielts-pi-nine.vercel.app/`;
+- добавить Redirect URL `https://ggielts.vercel.app/`;
 - для локальной проверки добавить `http://localhost:3000/`.
 
 В существующем Google OAuth Web client добавить Authorized JavaScript origin:
 
-`https://ielts-pi-nine.vercel.app`
+`https://ggielts.vercel.app`
 
 Redirect URI Google остаётся Supabase callback существующего проекта.
 
@@ -31,7 +31,7 @@ Redirect URI Google остаётся Supabase callback существующег�
 NEXT_PUBLIC_CLOUD_AUTH_ENABLED=true
 NEXT_PUBLIC_SUPABASE_URL=<тот же URL, что в ÇalışBase>
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<тот же publishable key, что в ÇalışBase>
-NEXT_PUBLIC_SITE_URL=https://ielts-pi-nine.vercel.app
+NEXT_PUBLIC_SITE_URL=https://ggielts.vercel.app
 ```
 
 После добавления переменных выполнить Redeploy.

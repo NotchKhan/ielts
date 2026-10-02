@@ -42,7 +42,7 @@ export function courseCloudClient() {
 
 export function signInRedirect() {
   const configured = new URL(
-    process.env.NEXT_PUBLIC_SITE_URL || "https://ielts-pi-nine.vercel.app",
+    process.env.NEXT_PUBLIC_SITE_URL || "https://ggielts.vercel.app",
   );
   if (configured.protocol !== "https:" || configured.username || configured.password) {
     throw new Error("Некорректный адрес возврата после входа.");
