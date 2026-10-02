@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { AccountBoundary } from './account-boundary';
 import PlatformApp from './platform-app';
 
 export const metadata: Metadata = {
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function IeltsGuidePage() {
-  return <PlatformApp />;
+  return <AccountBoundary><PlatformApp /></AccountBoundary>;
 }

@@ -19,4 +19,4 @@ npm run typecheck
 npm run build
 ```
 
-The app stores personal progress in the browser and needs no database or environment variables.
+Without an account, progress stays in the current browser. Google sign-in can sync a private course state through Supabase. See `supabase/SETUP.md` and `.env.example` for the cloud setup.

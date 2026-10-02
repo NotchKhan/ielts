@@ -39,6 +39,8 @@
 .profile>svg { color:var(--muted); }
 
 .workspace { grid-column:2;min-width:0; }
+.syncError { position:sticky;top:0;z-index:70;min-height:42px;padding:10px 3.2vw;background:#8a3428;color:#fffaf6;display:flex;align-items:center;justify-content:space-between;gap:14px;font-size:11px; }
+.syncError button { color:inherit;font-size:20px;line-height:1; }
 .topbar { height:88px;position:sticky;top:0;z-index:40;padding:0 3.2vw;background:color-mix(in srgb,var(--bg) 91%,transparent);backdrop-filter:blur(18px);display:flex;align-items:center;justify-content:flex-end;gap:20px;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent); }
 .menuButton { display:none;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;place-items:center;background:var(--surface); }
 .searchBox { width:min(430px,48vw);height:46px;padding:0 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface);display:flex;align-items:center;gap:10px;box-shadow:0 4px 18px rgba(31,48,91,.035); }

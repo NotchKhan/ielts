@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, BarChart3, Bell, BookOpen, Bookmark,
   CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle,
@@ -11,6 +11,8 @@ import {
 import { guideSections, sourceLinks, type GuideCard, type GuideSection, type GuideSectionId } from './guide-data';
 import { getCalendarWeekdays, getCardText, getDateLocale, getMonthLabel, getSectionText, type CourseLanguage } from './course-copy';
 import { getSessionModes, getStudyPlan, languageOptions, uiText, type UiKey } from './ui-copy';
+import { AccountSettings, useAccount } from './account-boundary';
+import { loadCourseState, saveCourseState } from '@/lib/ielts-cloud';
 import styles from './platform.module.css';
 
 type AppView = 'dashboard' | GuideSectionId | 'progress' | 'materials' | 'calendar' | 'notes' | 'settings';
@@ -77,21 +79,33 @@ function normalizeState(value?: Partial<AppState>): AppState {
   };
 }
 
-function saveState(state: AppState) {
-  try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* Cookie fallback below. */ }
+function scopedStorageKey(ownerId?: string | null) {
+  return ownerId ? `${STORAGE_KEY}:account:${ownerId}` : STORAGE_KEY;
+}
+
+function scopedCookieKey(ownerId?: string | null) {
+  return ownerId ? `${COOKIE_KEY}_${ownerId}` : COOKIE_KEY;
+}
+
+function saveState(state: AppState, ownerId?: string | null) {
+  const storageKey = scopedStorageKey(ownerId);
+  const cookieKey = scopedCookieKey(ownerId);
+  try { window.localStorage.setItem(storageKey, JSON.stringify(state)); } catch { /* Cookie fallback below. */ }
   try {
     const compact = { completed: state.completed, lastLessonId: state.lastLessonId, scores: state.scores, theme: state.theme, profileName: state.profileName, language: state.language };
-    document.cookie = `${COOKIE_KEY}=${encodeURIComponent(JSON.stringify(compact))}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    document.cookie = `${cookieKey}=${encodeURIComponent(JSON.stringify(compact))}; Path=/; Max-Age=31536000; SameSite=Lax`;
   } catch { /* The platform remains usable in memory. */ }
 }
 
-function readState(): AppState {
+function readState(ownerId?: string | null): AppState {
+  const storageKey = scopedStorageKey(ownerId);
+  const cookieKey = scopedCookieKey(ownerId);
   let raw: string | null = null;
-  try { raw = window.localStorage.getItem(STORAGE_KEY); } catch { /* Cookie fallback below. */ }
+  try { raw = window.localStorage.getItem(storageKey); } catch { /* Cookie fallback below. */ }
   if (!raw) {
     try {
-      const cookie = document.cookie.split('; ').find((item) => item.startsWith(`${COOKIE_KEY}=`));
-      if (cookie) raw = decodeURIComponent(cookie.slice(COOKIE_KEY.length + 1));
+      const cookie = document.cookie.split('; ').find((item) => item.startsWith(`${cookieKey}=`));
+      if (cookie) raw = decodeURIComponent(cookie.slice(cookieKey.length + 1));
     } catch { /* Start with defaults. */ }
   }
   if (!raw) return DEFAULT_STATE;
@@ -187,6 +201,7 @@ function overallBand(scores: Scores) {
 }
 
 export default function PlatformApp() {
+  const account = useAccount();
   const [view, setView] = useState<AppView>('dashboard');
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -194,11 +209,58 @@ export default function PlatformApp() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [ready, setReady] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const cloudOwner = useRef<string | null>(null);
+  const cloudRevision = useRef(0);
+  const cloudQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { setState(readState()); setReady(true); }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+    let live = true;
+    const ownerId = account.user?.id ?? null;
+    const local = readState(ownerId);
+    cloudOwner.current = null;
+    cloudRevision.current = 0;
+    cloudQueue.current = Promise.resolve();
+    queueMicrotask(() => {
+      if (!live) return;
+      setReady(false);
+      setSyncError('');
+    });
+
+    if (!ownerId) {
+      const timer = window.setTimeout(() => {
+        if (!live) return;
+        setState(local);
+        setReady(true);
+      }, 0);
+      return () => { live = false; window.clearTimeout(timer); };
+    }
+
+    void loadCourseState(ownerId).then(async (remote) => {
+      if (!live) return;
+      if (remote) {
+        const next = normalizeState(remote.state as Partial<AppState>);
+        cloudOwner.current = ownerId;
+        cloudRevision.current = remote.revision;
+        saveState(next, ownerId);
+        setState(next);
+      } else {
+        const created = await saveCourseState(ownerId, local, 0);
+        if (!live) return;
+        cloudOwner.current = ownerId;
+        cloudRevision.current = created.revision;
+        setState(local);
+      }
+      if (live) setReady(true);
+    }).catch((caught) => {
+      if (!live) return;
+      setState(local);
+      setSyncError(caught instanceof Error ? caught.message : 'Не удалось открыть облачный прогресс.');
+      setReady(true);
+    });
+
+    return () => { live = false; cloudOwner.current = null; };
+  }, [account.user?.id]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -225,8 +287,23 @@ export default function PlatformApp() {
     return lessons.filter(({ card }) => { const copy = getCardText(card, state.language); return [copy.title, copy.label, copy.signal, copy.trap, copy.check, ...copy.steps].join(' ').toLocaleLowerCase().includes(clean); });
   }, [query, state.language]);
 
+  function persist(next: AppState) {
+    saveState(next, account.user?.id ?? null);
+    const ownerId = cloudOwner.current;
+    if (!ownerId) return;
+    const snapshot = structuredClone(next);
+    cloudQueue.current = cloudQueue.current.then(async () => {
+      const saved = await saveCourseState(ownerId, snapshot, cloudRevision.current);
+      if (cloudOwner.current !== ownerId) return;
+      cloudRevision.current = saved.revision;
+      setSyncError('');
+    }).catch((caught) => {
+      setSyncError(caught instanceof Error ? caught.message : 'Не удалось сохранить прогресс в облаке.');
+    });
+  }
+
   function commit(recipe: (current: AppState) => AppState) {
-    setState((current) => { const next = recipe(current); saveState(next); return next; });
+    setState((current) => { const next = recipe(current); persist(next); return next; });
   }
 
   function navigate(next: AppView) {
@@ -262,6 +339,7 @@ export default function PlatformApp() {
     <LanguageContext.Provider value={state.language}><main className={`${styles.shell} ${state.theme === 'dark' ? styles.dark : ''}`} lang={state.language === 'kk' ? 'kk' : state.language}>
       <Sidebar view={view} activeLessonId={activeLessonId} state={state} overallPercent={overallPercent} completedCount={completedCount} mobileNav={mobileNav} onNavigate={navigate} onClose={() => setMobileNav(false)} />
       <section className={styles.workspace}>
+        {syncError && <div className={styles.syncError} role="alert">{syncError}<button onClick={() => setSyncError('')}>×</button></div>}
         <Topbar query={query} setQuery={setQuery} theme={state.theme} notificationsOpen={notificationsOpen} onMenu={() => setMobileNav(true)} onTheme={() => commit((current) => ({ ...current, theme: current.theme === 'light' ? 'dark' : 'light' }))} onLanguage={(language) => commit((current) => ({ ...current, language }))} onNotifications={() => setNotificationsOpen((open) => !open)} nextLesson={nextLesson} onOpenLesson={openLesson} />
         {query.trim().length >= 2 ? <SearchPage query={query} results={searchResults} completed={state.completed} onOpen={openLesson} />
           : activeLesson ? <LessonPage lesson={activeLesson} state={state} onToggle={toggleComplete} onBookmark={toggleBookmark} onNote={updateNote} onOpen={openLesson} onModule={() => navigate(activeLesson.section.id)} />
@@ -270,7 +348,7 @@ export default function PlatformApp() {
           : view === 'materials' ? <MaterialsPage state={state} onOpen={openLesson} />
           : view === 'calendar' ? <CalendarPage completed={state.completed} />
           : view === 'notes' ? <NotesPage state={state} onOpen={openLesson} />
-          : view === 'settings' ? <SettingsPage state={state} onState={(next) => { setState(next); saveState(next); }} />
+          : view === 'settings' ? <SettingsPage state={state} onState={(next) => commit(() => next)} />
           : activeSection ? <ModulePage section={activeSection} completed={state.completed} bookmarks={state.bookmarks} onOpen={openLesson} /> : null}
       </section>
     </main></LanguageContext.Provider>
@@ -281,7 +359,10 @@ function Sidebar({ view, activeLessonId, state, overallPercent, completedCount, 
   view: AppView; activeLessonId: string | null; state: AppState; overallPercent: number; completedCount: number; mobileNav: boolean;
   onNavigate: (view: AppView) => void; onClose: () => void;
 }) {
+  const account = useAccount();
   const { language, t } = useCourseText();
+  const accountName = account.user?.user_metadata?.full_name as string | undefined;
+  const displayName = accountName?.trim() || (state.profileName === 'Student' ? t('student') : state.profileName);
   const navItems: { id: AppView; label: string; icon: typeof Grid2X2 }[] = [
     { id: 'progress', label: t('progress'), icon: BarChart3 }, { id: 'materials', label: t('materials'), icon: FolderOpen },
     { id: 'calendar', label: t('calendar'), icon: CalendarDays }, { id: 'notes', label: t('notes'), icon: NotebookText },
@@ -298,7 +379,7 @@ function Sidebar({ view, activeLessonId, state, overallPercent, completedCount, 
     </nav>
     <div className={styles.sideBottom}>
       <div className={styles.courseProgress}><div className={styles.miniRing} style={{ '--progress': `${overallPercent * 3.6}deg` } as CSSProperties}><span>{overallPercent}%</span></div><div><strong>{t('courseProgress')}</strong><small>{t('lessonsCount',{done:completedCount,total:lessons.length})}</small></div><span className={styles.sideMeter}><i style={{ width: `${overallPercent}%` }} /></span></div>
-      <button className={styles.profile} onClick={() => onNavigate('settings')}><span>{(state.profileName==='Student'?t('student'):state.profileName).trim().charAt(0).toUpperCase() || 'S'}</span><div><strong>{state.profileName==='Student'?t('student'):state.profileName}</strong><small>{t('localProfile')}</small></div><ChevronRight size={16} /></button>
+      <button className={styles.profile} onClick={() => onNavigate('settings')}><span>{displayName.charAt(0).toUpperCase() || 'S'}</span><div><strong>{displayName}</strong><small>{account.user?.email ?? t('localProfile')}</small></div><ChevronRight size={16} /></button>
     </div>
   </aside>;
 }
@@ -486,6 +567,7 @@ function SettingsPage({ state, onState }: { state: AppState; onState: (state: Ap
   function updateScore(section: GuideSectionId,value: string) { const scores = { ...state.scores }; if (!value) delete scores[section]; else scores[section]=Number(value); onState({ ...state,scores }); }
   return <PageFrame title={t('settings')} subtitle={t('settingsText')}>
     <div className={styles.settingsGrid}>
+      <AccountSettings language={language} />
       <Panel title={t('profile')}><label className={styles.field}><span>{t('displayName')}</span><input value={draftName} onChange={(event) => setDraftName(event.target.value)} /><small>{t('notSent')}</small></label><button className={styles.saveButton} onClick={() => onState({ ...state,profileName:draftName.trim() || 'Student' })}>{t('saveName')}</button></Panel>
       <Panel title={t('language')}><p className={styles.panelIntro}>{t('languageHelp')}</p><div className={styles.languageSettings}>{languageOptions.map((option)=><button key={option.id} className={language===option.id?styles.selected:''} onClick={()=>onState({...state,language:option.id})}><strong>{option.short}</strong><span>{option.label}</span></button>)}</div></Panel>
       <Panel title={t('theme')}><div className={styles.themeChoice}><button className={state.theme==='light'?styles.selected:''} onClick={() => onState({ ...state,theme:'light' })}><Sun size={20} /><strong>{t('light')}</strong></button><button className={state.theme==='dark'?styles.selected:''} onClick={() => onState({ ...state,theme:'dark' })}><Moon size={20} /><strong>{t('dark')}</strong></button></div></Panel>
